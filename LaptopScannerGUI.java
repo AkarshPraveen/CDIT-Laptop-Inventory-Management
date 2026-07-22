@@ -42,7 +42,6 @@ public class LaptopScannerGUI extends JFrame {
     private String macAddress = "Scanning...";
     private String activeIp = "Scanning...";
 
-    // TODO: Update URL to match your teammate's actual CMS API endpoint
     private static final String CMS_API_URL = "https://cms.cditproject.org/api/saveExamAllotedSystem";
 
     public LaptopScannerGUI() {
