@@ -21,32 +21,33 @@ import oshi.hardware.GlobalMemory;
 import oshi.hardware.HWDiskStore;
 import oshi.hardware.HardwareAbstractionLayer;
 import oshi.hardware.NetworkIF;
+import oshi.software.os.OperatingSystem;
 
 public class LaptopScannerGUI extends JFrame {
 
-    private JTextField txtVenueCode;
+    private JTextField txtVenueNo;
     private JComboBox<String> cmbServerType;
     private JButton btnSubmit;
     private JLabel lblStatus;
 
-    // Spec Labels
-    private JLabel lblSerial, lblModel, lblProcessor, lblRam, lblStorage, lblMac, lblIp;
+    // Hardware Spec Labels
+    private JLabel lblSerial, lblModel, lblProcessor, lblRam, lblStorage, lblMac, lblOs, lblIp;
 
     private String serialNumber = "Scanning...";
-    private String model = "Scanning...";
-    private String manufacturer = "Scanning...";
+    private String systemName = "Scanning...";
+    private String systemOs = "Scanning...";
     private String processorInfo = "Scanning...";
     private String ram = "Scanning...";
     private String storage = "Scanning...";
     private String macAddress = "Scanning...";
     private String activeIp = "Scanning...";
 
-    // TODO: Update URL to match teammate's CMS API
-    private static final String CMS_API_URL = "http://localhost:8080/api/v1/servers/register";
+    // TODO: Update URL to match your teammate's actual CMS API endpoint
+    private static final String CMS_API_URL = "https://cms.cditproject.org/api/saveExamAllotedSystem";
 
     public LaptopScannerGUI() {
         setTitle("C-DIT CBT Server Inventory & Registration Agent");
-        setSize(580, 620);
+        setSize(580, 660);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
@@ -60,9 +61,9 @@ public class LaptopScannerGUI extends JFrame {
         mainPanel.add(header);
         mainPanel.add(Box.createVerticalStrut(15));
 
-        // Specs Panel (Increased rows to 7 for Processor)
+        // Specs Panel (Auto-Detected)
         JPanel specsPanel = createCardPanel("Hardware Details (Auto-Detected)");
-        JPanel gridSpecs = new JPanel(new GridLayout(7, 2, 10, 8));
+        JPanel gridSpecs = new JPanel(new GridLayout(8, 2, 10, 8));
 
         lblSerial = new JLabel("Loading...");
         lblModel = new JLabel("Loading...");
@@ -70,14 +71,16 @@ public class LaptopScannerGUI extends JFrame {
         lblRam = new JLabel("Loading...");
         lblStorage = new JLabel("Loading...");
         lblMac = new JLabel("Loading...");
+        lblOs = new JLabel("Loading...");
         lblIp = new JLabel("Loading...");
 
-        addGridRow(gridSpecs, "Serial Number:", lblSerial);
-        addGridRow(gridSpecs, "Model & Make:", lblModel);
-        addGridRow(gridSpecs, "Processor:", lblProcessor);
-        addGridRow(gridSpecs, "System RAM:", lblRam);
-        addGridRow(gridSpecs, "Storage Devices:", lblStorage);
-        addGridRow(gridSpecs, "Physical MAC:", lblMac);
+        addGridRow(gridSpecs, "System Serial:", lblSerial);
+        addGridRow(gridSpecs, "System Name / Model:", lblModel);
+        addGridRow(gridSpecs, "Processor (system_cpu):", lblProcessor);
+        addGridRow(gridSpecs, "RAM (system_ram):", lblRam);
+        addGridRow(gridSpecs, "Storage (system_memory):", lblStorage);
+        addGridRow(gridSpecs, "MAC ID (system_macid):", lblMac);
+        addGridRow(gridSpecs, "OS (system_os):", lblOs);
         addGridRow(gridSpecs, "Active Local IP:", lblIp);
 
         specsPanel.add(gridSpecs);
@@ -88,12 +91,14 @@ public class LaptopScannerGUI extends JFrame {
         JPanel formPanel = createCardPanel("Venue Configuration");
         JPanel gridForm = new JPanel(new GridLayout(2, 2, 10, 10));
 
-        txtVenueCode = new JTextField();
-        cmbServerType = new JComboBox<>(new String[]{"MAIN SERVER", "BACKUP SERVER"});
+        txtVenueNo = new JTextField();
+        txtVenueNo.setToolTipText("Enter Venue Number (e.g., 101)");
 
-        gridForm.add(new JLabel("Venue Code:"));
-        gridForm.add(txtVenueCode);
-        gridForm.add(new JLabel("Server Type:"));
+        cmbServerType = new JComboBox<>(new String[]{"MAIN SERVER (1)", "BACKUP SERVER (2)"});
+
+        gridForm.add(new JLabel("Venue No (venue_no):"));
+        gridForm.add(txtVenueNo);
+        gridForm.add(new JLabel("Server Type (system_type):"));
         gridForm.add(cmbServerType);
 
         formPanel.add(gridForm);
@@ -141,17 +146,17 @@ public class LaptopScannerGUI extends JFrame {
             try {
                 SystemInfo si = new SystemInfo();
                 HardwareAbstractionLayer hal = si.getHardware();
+                OperatingSystem os = si.getOperatingSystem();
                 ComputerSystem computerSystem = hal.getComputerSystem();
 
-                manufacturer = computerSystem.getManufacturer();
-                model = computerSystem.getModel();
+                systemName = computerSystem.getManufacturer() + " " + computerSystem.getModel();
+                systemOs = os.getFamily() + " " + os.getVersionInfo().getVersion();
 
                 // 1. Fetch Processor Specs
                 CentralProcessor proc = hal.getProcessor();
-                processorInfo = proc.getProcessorIdentifier().getName().trim() + 
-                                " (" + proc.getPhysicalProcessorCount() + " Cores / " + proc.getLogicalProcessorCount() + " Threads)";
+                processorInfo = proc.getProcessorIdentifier().getName().trim();
 
-                // 2. Fetch Serial Number via pkexec dmidecode
+                // 2. Fetch Serial Number
                 serialNumber = fetchSerialWithPkexec();
                 if (serialNumber.equals("Unknown") || serialNumber.isEmpty()) {
                     serialNumber = computerSystem.getSerialNumber();
@@ -159,25 +164,27 @@ public class LaptopScannerGUI extends JFrame {
 
                 // 3. Fetch RAM Details
                 GlobalMemory memory = hal.getMemory();
-                ram = (memory.getTotal() / (1024 * 1024 * 1024)) + " GB";
+                long totalRamGb = memory.getTotal() / (1024 * 1024 * 1024);
+                ram = totalRamGb + "GB";
 
                 // 4. Fetch Storage Devices
                 List<HWDiskStore> diskStores = hal.getDiskStores();
                 StringBuilder diskStr = new StringBuilder();
                 for (HWDiskStore disk : diskStores) {
                     if (disk.getSize() > 0) {
-                        diskStr.append(disk.getModel()).append(" (").append(disk.getSize() / (1024 * 1024 * 1024)).append(" GB); ");
+                        long sizeGb = disk.getSize() / (1024 * 1024 * 1024);
+                        diskStr.append(sizeGb).append("GB Storage; ");
                     }
                 }
-                storage = diskStr.length() > 0 ? diskStr.toString() : "Unknown";
+                storage = diskStr.length() > 0 ? diskStr.toString().trim() : "Unknown";
 
-                // 5. Fetch Physical MAC
+                // 5. Fetch Physical MAC Address
                 List<NetworkIF> networkIFs = hal.getNetworkIFs();
                 for (NetworkIF net : networkIFs) {
                     if (net.getMacaddr() != null && !net.getMacaddr().isEmpty() && !net.getMacaddr().equals("00:00:00:00:00:00")) {
                         String nameLower = net.getDisplayName().toLowerCase();
                         if (nameLower.contains("wireless") || nameLower.contains("ethernet") || nameLower.contains("realtek") || nameLower.contains("intel")) {
-                            macAddress = net.getMacaddr();
+                            macAddress = net.getMacaddr().toUpperCase();
                             break;
                         }
                     }
@@ -192,17 +199,18 @@ public class LaptopScannerGUI extends JFrame {
 
             SwingUtilities.invokeLater(() -> {
                 lblSerial.setText(serialNumber);
-                lblModel.setText(manufacturer + " " + model);
+                lblModel.setText(systemName);
                 lblProcessor.setText(processorInfo);
                 lblRam.setText(ram);
                 lblStorage.setText(storage);
                 lblMac.setText(macAddress);
+                lblOs.setText(systemOs);
                 lblIp.setText(activeIp);
 
                 if (activeIp.endsWith(".1")) {
-                    cmbServerType.setSelectedItem("MAIN SERVER");
+                    cmbServerType.setSelectedIndex(0); // Main Server = 1
                 } else if (activeIp.endsWith(".2")) {
-                    cmbServerType.setSelectedItem("BACKUP SERVER");
+                    cmbServerType.setSelectedIndex(1); // Backup Server = 2
                 }
             });
         }).start();
@@ -237,23 +245,52 @@ public class LaptopScannerGUI extends JFrame {
     }
 
     private void submitDataToCms() {
-        String venueCode = txtVenueCode.getText().trim();
-        String serverType = (String) cmbServerType.getSelectedItem();
+        String venueStr = txtVenueNo.getText().trim();
 
-        if (venueCode.isEmpty()) {
-            lblStatus.setText("❌ Error: Enter Venue Code!");
+        if (venueStr.isEmpty()) {
+            lblStatus.setText("❌ Error: Enter Venue Number!");
             lblStatus.setForeground(Color.RED);
             return;
         }
+
+        int venueNo;
+        try {
+            venueNo = Integer.parseInt(venueStr);
+        } catch (NumberFormatException ex) {
+            lblStatus.setText("❌ Error: Venue No must be a valid number!");
+            lblStatus.setForeground(Color.RED);
+            return;
+        }
+
+        // system_type: 1 for Main Server, 2 for Backup Server
+        int systemType = (cmbServerType.getSelectedIndex() == 0) ? 1 : 2;
 
         btnSubmit.setEnabled(false);
         lblStatus.setText("Connecting to CMS API...");
         lblStatus.setForeground(Color.BLUE);
 
-        // Include processor in the CMS JSON Payload
+        // Construct exact JSON Payload required by backend API
         String jsonPayload = String.format(
-            "{\"venueCode\":\"%s\",\"serverType\":\"%s\",\"serialNumber\":\"%s\",\"model\":\"%s\",\"processor\":\"%s\",\"ram\":\"%s\",\"storage\":\"%s\",\"macAddress\":\"%s\",\"activeIp\":\"%s\"}",
-            venueCode, serverType, serialNumber, model, processorInfo, ram, storage, macAddress, activeIp
+            "{\n" +
+            "  \"system_details\": \"Serial: %s | Model: %s | IP: %s\",\n" +
+            "  \"venue_no\": %d,\n" +
+            "  \"system_type\": %d,\n" +
+            "  \"system_macid\": \"%s\",\n" +
+            "  \"system_ram\": \"%s\",\n" +
+            "  \"system_memory\": \"%s\",\n" +
+            "  \"system_name\": \"%s\",\n" +
+            "  \"system_os\": \"%s\",\n" +
+            "  \"system_cpu\": \"%s\"\n" +
+            "}",
+            serialNumber, systemName, activeIp,
+            venueNo,
+            systemType,
+            macAddress,
+            ram,
+            storage,
+            systemName,
+            systemOs,
+            processorInfo
         );
 
         new Thread(() -> {
