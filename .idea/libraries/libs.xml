@@ -1,0 +1,21 @@
+<component name="libraryTable">
+  <library name="libs">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/libs/slf4j-simple-2.0.12.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/oshi-core-6.4.12.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/jna-platform-5.14.0.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.fxml.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.swing.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/slf4j-api-2.0.12.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.base.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx-swt.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.graphics.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/jna-5.14.0.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.media.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.web.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/javafx.controls.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

@@ -1,6 +1,8 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
@@ -10,9 +12,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import oshi.SystemInfo;
 import oshi.hardware.CentralProcessor;
@@ -25,6 +30,13 @@ import oshi.software.os.OperatingSystem;
 
 public class LaptopScannerGUI extends JFrame {
 
+    // Base API URL — Update this domain to match your teammate's actual host/ip
+    private static final String BASE_API_URL = "https://cms.cditproject.org/api";
+    private static final String GET_EXAMS_URL = BASE_API_URL + "/getActiveExams";
+    private static final String SAVE_SYSTEM_URL = BASE_API_URL + "/saveExamAllotedSystem";
+
+    // UI Input Controls
+    private JComboBox<ExamItem> cmbExams;
     private JTextField txtVenueNo;
     private JComboBox<String> cmbServerType;
     private JButton btnSubmit;
@@ -42,12 +54,11 @@ public class LaptopScannerGUI extends JFrame {
     private String macAddress = "Scanning...";
     private String activeIp = "Scanning...";
 
-    // TODO: Update URL to match your teammate's actual CMS API endpoint
-    private static final String CMS_API_URL = "https://cms.cditproject.org/api/saveExamAllotedSystem";
+    private List<ExamItem> allExamsList = new ArrayList<>();
 
     public LaptopScannerGUI() {
         setTitle("C-DIT CBT Server Inventory & Registration Agent");
-        setSize(580, 660);
+        setSize(600, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
 
@@ -63,7 +74,7 @@ public class LaptopScannerGUI extends JFrame {
 
         // Specs Panel (Auto-Detected)
         JPanel specsPanel = createCardPanel("Hardware Details (Auto-Detected)");
-        JPanel gridSpecs = new JPanel(new GridLayout(8, 2, 10, 8));
+        JPanel gridSpecs = new JPanel(new GridLayout(8, 2, 10, 6));
 
         lblSerial = new JLabel("Loading...");
         lblModel = new JLabel("Loading...");
@@ -88,14 +99,23 @@ public class LaptopScannerGUI extends JFrame {
         mainPanel.add(Box.createVerticalStrut(15));
 
         // Venue Configuration Panel
-        JPanel formPanel = createCardPanel("Venue Configuration");
-        JPanel gridForm = new JPanel(new GridLayout(2, 2, 10, 10));
+        JPanel formPanel = createCardPanel("Venue & Exam Configuration");
+        JPanel gridForm = new JPanel(new GridLayout(3, 2, 10, 10));
+
+        // Searchable and Scrollable Exam Dropdown
+        cmbExams = new JComboBox<>();
+        cmbExams.setEditable(true); // Enables direct typing to search
+        cmbExams.setMaximumRowCount(6); // Sets visible scroll height
+
+        setupSearchableComboBox(cmbExams);
 
         txtVenueNo = new JTextField();
         txtVenueNo.setToolTipText("Enter Venue Number (e.g., 101)");
 
         cmbServerType = new JComboBox<>(new String[]{"MAIN SERVER (1)", "BACKUP SERVER (2)"});
 
+        gridForm.add(new JLabel("Select Exam (exam_id):"));
+        gridForm.add(cmbExams);
         gridForm.add(new JLabel("Venue No (venue_no):"));
         gridForm.add(txtVenueNo);
         gridForm.add(new JLabel("Server Type (system_type):"));
@@ -124,7 +144,8 @@ public class LaptopScannerGUI extends JFrame {
 
         add(mainPanel);
 
-        // Run background hardware scan
+        // Run background tasks
+        fetchActiveExamsInBackground();
         scanHardwareInBackground();
     }
 
@@ -141,6 +162,100 @@ public class LaptopScannerGUI extends JFrame {
         panel.add(valLabel);
     }
 
+    // Enables instant search filtering when typing inside the dropdown
+    private void setupSearchableComboBox(JComboBox<ExamItem> comboBox) {
+        JTextField editor = (JTextField) comboBox.getEditor().getEditorComponent();
+        editor.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyReleased(KeyEvent e) {
+                // Ignore navigation keys
+                if (e.getKeyCode() == KeyEvent.VK_UP || e.getKeyCode() == KeyEvent.VK_DOWN ||
+                        e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_ESCAPE) {
+                    return;
+                }
+
+                String text = editor.getText().toLowerCase();
+                SwingUtilities.invokeLater(() -> filterExams(text));
+            }
+        });
+    }
+
+    private void filterExams(String text) {
+        JTextField editor = (JTextField) cmbExams.getEditor().getEditorComponent();
+        int caretPos = editor.getCaretPosition();
+
+        cmbExams.removeAllItems();
+        for (ExamItem item : allExamsList) {
+            if (item.examName.toLowerCase().contains(text) || item.examCode.toLowerCase().contains(text)) {
+                cmbExams.addItem(item);
+            }
+        }
+
+        editor.setText(text);
+        try {
+            editor.setCaretPosition(Math.min(caretPos, text.length()));
+        } catch (Exception ignored) {}
+
+        if (cmbExams.getItemCount() > 0) {
+            cmbExams.showPopup();
+        }
+    }
+
+    // API Call 1: Get Active Exams
+    private void fetchActiveExamsInBackground() {
+        new Thread(() -> {
+            try {
+                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+                HttpRequest request = HttpRequest.newBuilder().uri(URI.create(GET_EXAMS_URL)).GET().build();
+
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() == 200) {
+                    List<ExamItem> parsedExams = parseExamsJson(response.body());
+                    SwingUtilities.invokeLater(() -> {
+                        allExamsList.clear();
+                        allExamsList.addAll(parsedExams);
+
+                        cmbExams.removeAllItems();
+                        for (ExamItem item : allExamsList) {
+                            cmbExams.addItem(item);
+                        }
+
+                        if (allExamsList.isEmpty()) {
+                            lblStatus.setText("⚠️ Warning: No active exams found!");
+                            lblStatus.setForeground(Color.ORANGE);
+                        }
+                    });
+                } else {
+                    SwingUtilities.invokeLater(() -> {
+                        lblStatus.setText("❌ Failed to load exams (Status: " + response.statusCode() + ")");
+                        lblStatus.setForeground(Color.RED);
+                    });
+                }
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> {
+                    lblStatus.setText("❌ Error fetching exams: " + ex.getMessage());
+                    lblStatus.setForeground(Color.RED);
+                });
+            }
+        }).start();
+    }
+
+    // Simple RegEx-based JSON parser for exam objects
+    private List<ExamItem> parseExamsJson(String json) {
+        List<ExamItem> list = new ArrayList<>();
+        Pattern pattern = Pattern.compile("\\{\\s*\"id\"\\s*:\\s*(\\d+)\\s*,\\s*\"exam_name\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"examcode\"\\s*:\\s*\"([^\"]+)\"\\s*\\}");
+        Matcher matcher = pattern.matcher(json);
+
+        while (matcher.find()) {
+            int id = Integer.parseInt(matcher.group(1));
+            String name = matcher.group(2);
+            String code = matcher.group(3);
+            list.add(new ExamItem(id, name, code));
+        }
+        return list;
+    }
+
     private void scanHardwareInBackground() {
         new Thread(() -> {
             try {
@@ -152,33 +267,28 @@ public class LaptopScannerGUI extends JFrame {
                 systemName = computerSystem.getManufacturer() + " " + computerSystem.getModel();
                 systemOs = os.getFamily() + " " + os.getVersionInfo().getVersion();
 
-                // 1. Fetch Processor Specs
                 CentralProcessor proc = hal.getProcessor();
                 processorInfo = proc.getProcessorIdentifier().getName().trim();
 
-                // 2. Fetch Serial Number
                 serialNumber = fetchSerialWithPkexec();
                 if (serialNumber.equals("Unknown") || serialNumber.isEmpty()) {
                     serialNumber = computerSystem.getSerialNumber();
                 }
 
-                // 3. Fetch RAM Details
                 GlobalMemory memory = hal.getMemory();
                 long totalRamGb = memory.getTotal() / (1024 * 1024 * 1024);
                 ram = totalRamGb + "GB";
 
-                // 4. Fetch Storage Devices
                 List<HWDiskStore> diskStores = hal.getDiskStores();
                 StringBuilder diskStr = new StringBuilder();
                 for (HWDiskStore disk : diskStores) {
                     if (disk.getSize() > 0) {
                         long sizeGb = disk.getSize() / (1024 * 1024 * 1024);
-                        diskStr.append(sizeGb).append("GB Storage; ");
+                        diskStr.append(sizeGb).append("GB SSD; ");
                     }
                 }
                 storage = diskStr.length() > 0 ? diskStr.toString().trim() : "Unknown";
 
-                // 5. Fetch Physical MAC Address
                 List<NetworkIF> networkIFs = hal.getNetworkIFs();
                 for (NetworkIF net : networkIFs) {
                     if (net.getMacaddr() != null && !net.getMacaddr().isEmpty() && !net.getMacaddr().equals("00:00:00:00:00:00")) {
@@ -190,7 +300,6 @@ public class LaptopScannerGUI extends JFrame {
                     }
                 }
 
-                // 6. Fetch Active IP
                 activeIp = fetchActiveNetworkIp();
 
             } catch (Exception e) {
@@ -208,9 +317,9 @@ public class LaptopScannerGUI extends JFrame {
                 lblIp.setText(activeIp);
 
                 if (activeIp.endsWith(".1")) {
-                    cmbServerType.setSelectedIndex(0); // Main Server = 1
+                    cmbServerType.setSelectedIndex(0);
                 } else if (activeIp.endsWith(".2")) {
-                    cmbServerType.setSelectedIndex(1); // Backup Server = 2
+                    cmbServerType.setSelectedIndex(1);
                 }
             });
         }).start();
@@ -244,9 +353,30 @@ public class LaptopScannerGUI extends JFrame {
         return "Disconnected";
     }
 
+    // API Call 2: Save Exam Alloted System
     private void submitDataToCms() {
-        String venueStr = txtVenueNo.getText().trim();
+        Object selectedExamObj = cmbExams.getSelectedItem();
+        ExamItem selectedExam = null;
 
+        if (selectedExamObj instanceof ExamItem) {
+            selectedExam = (ExamItem) selectedExamObj;
+        } else if (selectedExamObj instanceof String) {
+            String typedText = ((String) selectedExamObj).trim();
+            for (ExamItem item : allExamsList) {
+                if (item.examName.equalsIgnoreCase(typedText) || item.examCode.equalsIgnoreCase(typedText)) {
+                    selectedExam = item;
+                    break;
+                }
+            }
+        }
+
+        if (selectedExam == null) {
+            lblStatus.setText("❌ Error: Please select a valid Exam from the list!");
+            lblStatus.setForeground(Color.RED);
+            return;
+        }
+
+        String venueStr = txtVenueNo.getText().trim();
         if (venueStr.isEmpty()) {
             lblStatus.setText("❌ Error: Enter Venue Number!");
             lblStatus.setForeground(Color.RED);
@@ -262,65 +392,99 @@ public class LaptopScannerGUI extends JFrame {
             return;
         }
 
-        // system_type: 1 for Main Server, 2 for Backup Server
         int systemType = (cmbServerType.getSelectedIndex() == 0) ? 1 : 2;
 
         btnSubmit.setEnabled(false);
         lblStatus.setText("Connecting to CMS API...");
         lblStatus.setForeground(Color.BLUE);
 
-        // Construct exact JSON Payload required by backend API
+        // Construct exact JSON Payload matching your team's API schema
         String jsonPayload = String.format(
-            "{\n" +
-            "  \"system_details\": \"Serial: %s | Model: %s | IP: %s\",\n" +
-            "  \"venue_no\": %d,\n" +
-            "  \"system_type\": %d,\n" +
-            "  \"system_macid\": \"%s\",\n" +
-            "  \"system_ram\": \"%s\",\n" +
-            "  \"system_memory\": \"%s\",\n" +
-            "  \"system_name\": \"%s\",\n" +
-            "  \"system_os\": \"%s\",\n" +
-            "  \"system_cpu\": \"%s\"\n" +
-            "}",
-            serialNumber, systemName, activeIp,
-            venueNo,
-            systemType,
-            macAddress,
-            ram,
-            storage,
-            systemName,
-            systemOs,
-            processorInfo
+                "{\n" +
+                        "  \"exam_id\": %d,\n" +
+                        "  \"system_details\": \"Serial: %s | Model: %s | IP: %s\",\n" +
+                        "  \"venue_no\": %d,\n" +
+                        "  \"system_macid\": \"%s\",\n" +
+                        "  \"system_type\": %d,\n" +
+                        "  \"system_ram\": \"%s\",\n" +
+                        "  \"system_memory\": \"%s\",\n" +
+                        "  \"system_name\": \"%s\",\n" +
+                        "  \"system_os\": \"%s\",\n" +
+                        "  \"system_cpu\": \"%s\"\n" +
+                        "}",
+                selectedExam.id,
+                serialNumber, systemName, activeIp,
+                venueNo,
+                macAddress,
+                systemType,
+                ram,
+                storage,
+                systemName,
+                systemOs,
+                processorInfo
         );
+
+        System.out.println("\n--- Sending Payload to: " + SAVE_SYSTEM_URL + " ---");
+        System.out.println(jsonPayload);
 
         new Thread(() -> {
             boolean isSuccess = false;
+            String serverMsg = "";
+
             try {
                 HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
                 HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(CMS_API_URL))
+                        .uri(URI.create(SAVE_SYSTEM_URL))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
                         .build();
 
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                isSuccess = (response.statusCode() == 200 || response.statusCode() == 201);
+
+                System.out.println("HTTP Response Status: " + response.statusCode());
+                System.out.println("HTTP Response Body: " + response.body());
+
+                if (response.statusCode() == 200 || response.statusCode() == 201) {
+                    isSuccess = true;
+                } else {
+                    serverMsg = "Status " + response.statusCode() + " - " + response.body();
+                }
             } catch (Exception ex) {
-                isSuccess = false;
+                serverMsg = "Exception: " + ex.getMessage();
             }
 
             boolean finalSuccess = isSuccess;
+            String finalMsg = serverMsg;
+
             SwingUtilities.invokeLater(() -> {
                 btnSubmit.setEnabled(true);
                 if (finalSuccess) {
-                    lblStatus.setText("SUCCESS: Registered to CMS!");
+                    lblStatus.setText("SUCCESS: Saved to CMS!");
                     lblStatus.setForeground(new Color(22, 163, 74));
                 } else {
-                    lblStatus.setText("FAILED: Could not reach CMS.");
+                    lblStatus.setText("FAILED: " + finalMsg);
                     lblStatus.setForeground(Color.RED);
                 }
             });
         }).start();
+    }
+
+    // Helper Data Object for Exam Items
+    static class ExamItem {
+        int id;
+        String examName;
+        String examCode;
+
+        public ExamItem(int id, String examName, String examCode) {
+            this.id = id;
+            this.examName = examName;
+            this.examCode = examCode;
+        }
+
+        @Override
+        public String toString() {
+            return examName + " (" + examCode + ")";
+        }
     }
 
     public static void main(String[] args) {
