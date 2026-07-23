@@ -326,14 +326,38 @@ public class LaptopScannerGUI extends JFrame {
     }
 
     private String fetchSerialWithPkexec() {
-        try {
-            Process process = Runtime.getRuntime().exec(new String[]{"pkexec", "dmidecode", "-s", "system-serial-number"});
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String serial = reader.readLine();
-            return (serial != null && !serial.isBlank()) ? serial.trim() : "Unknown";
-        } catch (Exception e) {
-            return "Unknown";
+        String osName = System.getProperty("os.name").toLowerCase();
+
+        // 1. Windows Serial Number Extraction
+        if (osName.contains("win")) {
+            try {
+                Process process = Runtime.getRuntime().exec(new String[]{"wmic", "bios", "get", "serialnumber"});
+                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (!line.isEmpty() && !line.equalsIgnoreCase("SerialNumber")) {
+                        return line;
+                    }
+                }
+            } catch (Exception e) {
+                return "Unknown";
+            }
         }
+
+        // 2. Linux / Ubuntu Serial Number Extraction (dmidecode via pkexec)
+        else if (osName.contains("nix") || osName.contains("nux")) {
+            try {
+                Process process = Runtime.getRuntime().exec(new String[]{"pkexec", "dmidecode", "-s", "system-serial-number"});
+                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                String serial = reader.readLine();
+                return (serial != null && !serial.isBlank()) ? serial.trim() : "Unknown";
+            } catch (Exception e) {
+                return "Unknown";
+            }
+        }
+
+        return "Unknown";
     }
 
     private String fetchActiveNetworkIp() {
